@@ -95,22 +95,10 @@ function parseCSVLine(line) {
     return result;
 }
 
-// Загрузка CSV при старте
+// Загрузка CSV при старте - отключена, пользователь загружает сам
 window.addEventListener('load', () => {
-    fetch('Clockify_Time_Report_Detailed_01_01_2026-31_12_2026.csv')
-        .then(response => response.text())
-        .then(data => {
-            parseCSV(data);
-            initializeApp();
-            // Обновляем расписание если день уже выбран
-            if (selectedDate) {
-                showScheduleForDate(selectedDate);
-            }
-        })
-        .catch(() => {
-            console.log('CSV не найден, ожидаем загрузки вручную');
-            initializeApp();
-        });
+    console.log('Приложение загружено. Загрузите CSV файл вручную.');
+    initializeApp();
 });
 
 // Загрузка CSV вручную
@@ -813,24 +801,102 @@ function showScheduleForDate(date) {
     // Распределяем время последовательно по блокам
     schedule.schedule.forEach(item => {
         const exerciseName = item.exercise.toLowerCase();
+        const exerciseDescription = item.description.toLowerCase();
         const timeRange = item.time; // например "0–10 мин"
         
         // Извлекаем длительность блока из строки времени
         const timeMatch = timeRange.match(/(\d+)–(\d+)/);
         const blockDuration = timeMatch ? parseInt(timeMatch[2]) - parseInt(timeMatch[1]) : 10;
         
-        const completed = completedExercises[exerciseName];
+        // Ищем подходящее выполненное упражнение
+        let matchedExercise = null;
+        
+        // Определяем направление из описания расписания
+        const hasAscending = exerciseDescription.includes('восходящ');
+        const hasDescending = exerciseDescription.includes('нисходящ');
+        const hasHarmonic = exerciseDescription.includes('гармонич');
+        
+        // Ищем совпадение в выполненных упражнениях
+        for (const [key, data] of Object.entries(completedExercises)) {
+            let isMatch = false;
+            
+            console.log(`Проверяем: "${exerciseName}" vs "${key}"`);
+            
+            // Для упражнений на интервалы - проверяем направление
+            if (exerciseName.includes('интервал')) {
+                const baseExerciseName = exerciseName.replace('интервалов', 'интервал');
+                
+                if (key.includes(baseExerciseName)) {
+                    const csvHasAscending = key.includes('восходящ');
+                    const csvHasDescending = key.includes('нисходящ');
+                    const csvHasHarmonic = key.includes('гармонич');
+                    
+                    console.log(`Найдено совпадение по базовому названию. CSV направления: восх=${csvHasAscending}, нисх=${csvHasDescending}, гарм=${csvHasHarmonic}`);
+                    console.log(`Расписание направления: восх=${hasAscending}, нисх=${hasDescending}, гарм=${hasHarmonic}`);
+                    
+                    // Если в расписании указано направление - проверяем совпадение
+                    if (hasAscending) {
+                        // Ищем восходящие: либо явно указано, либо НЕ указано (по умолчанию)
+                        if (csvHasAscending || (!csvHasAscending && !csvHasDescending && !csvHasHarmonic)) {
+                            isMatch = true;
+                            console.log('Совпадение: восходящие (явно или по умолчанию)');
+                        }
+                    } else if (hasDescending && csvHasDescending) {
+                        isMatch = true;
+                        console.log('Совпадение: нисходящие');
+                    } else if (hasHarmonic && csvHasHarmonic) {
+                        isMatch = true;
+                        console.log('Совпадение: гармонические');
+                    } else if (!hasAscending && !hasDescending && !hasHarmonic) {
+                        // Если направление не указано в расписании - берем ВОСХОДЯЩИЕ (явно или по умолчанию)
+                        if (csvHasAscending || (!csvHasAscending && !csvHasDescending && !csvHasHarmonic)) {
+                            isMatch = true;
+                            console.log('Совпадение: без направления в расписании = восходящие по умолчанию');
+                        }
+                    }
+                }
+            } else {
+                // Для других упражнений (Clefs, Абсолютный слух и т.д.) - простое совпадение
+                if ((key.includes('clefs') || key.includes('ключ')) && (exerciseName.includes('clefs') || exerciseName.includes('ключ'))) {
+                    isMatch = true;
+                    console.log('Совпадение: Clefs');
+                } else if (key.includes('абсолютный слух') && exerciseName.includes('абсолютный слух')) {
+                    isMatch = true;
+                    console.log('Совпадение: Абсолютный слух');
+                } else if (key.includes('пение нот') && exerciseName.includes('пение нот')) {
+                    isMatch = true;
+                    console.log('Совпадение: Пение нот');
+                } else if (key.includes('чтение нот') && exerciseName.includes('чтение нот')) {
+                    isMatch = true;
+                    console.log('Совпадение: Чтение нот');
+                }
+            }
+            
+            if (isMatch && data.remainingTime > 0) {
+                matchedExercise = data;
+                console.log(`Выбрано упражнение: ${key}, оставшееся время: ${data.remainingTime}`);
+                break;
+            }
+        }
         
         let status = 'not-done'; // по умолчанию не выполнено
         let timeSpent = '—';
         let allocatedTime = 0;
         
-        if (completed && completed.remainingTime > 0) {
+        if (matchedExercise && matchedExercise.remainingTime > 0) {
             // Выделяем время для этого блока
-            allocatedTime = Math.min(completed.remainingTime, blockDuration);
-            completed.remainingTime -= allocatedTime;
+            allocatedTime = Math.min(matchedExercise.remainingTime, blockDuration);
+            matchedExercise.remainingTime -= allocatedTime;
             
-            timeSpent = `${Math.round(allocatedTime)} мин`;
+            // Форматируем время с секундами
+            const minutes = Math.floor(allocatedTime);
+            const seconds = Math.round((allocatedTime - minutes) * 60);
+            
+            if (seconds > 0) {
+                timeSpent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+            } else {
+                timeSpent = `${minutes} мин`;
+            }
             
             // Определяем статус
             if (allocatedTime >= blockDuration) {
@@ -866,45 +932,51 @@ function analyzeCompletedExercises(date) {
     const dateStr = formatDateForCSV(date);
     const completed = {};
     
+    console.log('Анализируем дату:', dateStr);
+    
     // Фильтруем данные по выбранной дате
     const dayData = csvData.filter(entry => {
         return entry['Start Date'] === dateStr;
     });
     
-    // Группируем по типам упражнений
+    console.log('Найдено записей за день:', dayData.length);
     dayData.forEach(entry => {
-        const desc = (entry['Description'] || '').toLowerCase();
-        const duration = parseFloat(entry['Duration (decimal)'] || 0) * 60; // в минутах
+        console.log('Запись:', entry['Description'], '|', entry['Duration (h)']);
+    });
+    
+    // Группируем по ПОЛНОМУ описанию упражнений (не объединяем разные варианты)
+    dayData.forEach(entry => {
+        const desc = entry['Description'] || '';
         
-        // Определяем тип упражнения
-        let exerciseType = null;
+        // Парсим длительность из формата "HH:MM:SS"
+        let duration = 0;
+        const durationStr = entry['Duration (h)'] || '';
+        const timeMatch = durationStr.match(/(\d+):(\d+):(\d+)/);
         
-        if (desc.includes('определение интервал')) {
-            exerciseType = 'определение интервалов';
-        } else if (desc.includes('сравнение интервал')) {
-            exerciseType = 'сравнение интервалов';
-        } else if (desc.includes('пение интервал')) {
-            exerciseType = 'пение интервалов';
-        } else if (desc.includes('чтение интервал')) {
-            exerciseType = 'чтение интервалов';
-        } else if (desc.includes('абсолютный слух')) {
-            exerciseType = 'абсолютный слух';
-        } else if (desc.includes('пение нот')) {
-            exerciseType = 'пение нот';
-        } else if (desc.includes('чтение нот') || desc.includes('clefs') || desc.includes('ключ')) {
-            exerciseType = 'clefs';
+        if (timeMatch) {
+            const hours = parseInt(timeMatch[1]);
+            const minutes = parseInt(timeMatch[2]);
+            const seconds = parseInt(timeMatch[3]);
+            duration = hours * 60 + minutes + seconds / 60; // в минутах с учетом секунд
+        } else {
+            // Fallback на decimal если нет формата HH:MM:SS
+            duration = parseFloat(entry['Duration (decimal)'] || 0) * 60;
         }
         
-        if (exerciseType) {
-            if (!completed[exerciseType]) {
-                completed[exerciseType] = { time: 0, remainingTime: 0, count: 0 };
+        // Используем полное описание как ключ
+        const exerciseKey = desc.toLowerCase().trim();
+        
+        if (exerciseKey) {
+            if (!completed[exerciseKey]) {
+                completed[exerciseKey] = { time: 0, remainingTime: 0, count: 0, description: desc };
             }
-            completed[exerciseType].time += duration;
-            completed[exerciseType].remainingTime += duration; // Для последовательного распределения
-            completed[exerciseType].count += 1;
+            completed[exerciseKey].time += duration;
+            completed[exerciseKey].remainingTime += duration;
+            completed[exerciseKey].count += 1;
         }
     });
     
+    console.log('Сгруппированные упражнения:', completed);
     return completed;
 }
 
