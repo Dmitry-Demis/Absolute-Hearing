@@ -1,0 +1,11 @@
+# CSV файлы с данными практики
+*.csv
+Clockify_Time_Report_*.csv
+
+# Временные файлы
+*.tmp
+*.bak
+
+# Системные файлы
+.DS_Store
+Thumbs.db
